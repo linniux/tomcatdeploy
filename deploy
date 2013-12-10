@@ -1,0 +1,52 @@
+from fabric.api import run
+from fabric.tasks import execute
+from fabric.api import *
+import fabfile
+
+#This program is under the Fabric (1.8.0).
+
+#put the deploy and fabfile in a same  directory,and put tomcatdeploy to ./upload directory
+
+
+#maybe need
+#env.password = "1234asdf\!"
+
+#The below variable which you must change every time
+remotetomcatwebappdir = '/usr/local/apache-tomcat-8.0.0-RC5/webapps'
+localtomcatwebappzipfile = 'ROOT.zip'
+justupload = 'de.propeties'
+runcmd = "python2.6  /tmp/tomcatdeploy.py -p '/usr/local/apache-tomcat-8.0.0-RC5'   -H '127.0.0.1'  -P 8080  -f 'ROOT.zip' -d 'deploy'"
+
+
+
+uploadscript = './upload/tomcatdeploy.py'
+uploaddir = './upload/'
+tmpdir = '/tmp/'
+script = '/tmp/tomcatdeploy.py'
+
+
+
+
+@parallel
+def deploytomcat():
+	run("just do it")
+	
+	
+	fabfile.upfile(uploaddir+localtomcatwebappzipfile,remotetomcatwebappdir)
+	fabfile.upfile(uploadscript,tmpdir)
+	run(runcmd,pty=False)
+	with hide('running'):
+		run('rm -rf %s' % (script))
+
+def publishkey():
+	fabfile.addkey()
+	
+	
+def justupload():
+	fabfile.upfile(uploaddir+justupload,remotetomcatwebappdir)
+
+
+if __name__ == "__main__":
+	a = ['10.19.1.128','10.19.2.201','10.19.2.202']
+	execute(publishkey,hosts=a)
+

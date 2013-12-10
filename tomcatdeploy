@@ -1,0 +1,260 @@
+#!/usr/bin/python2.6
+import os
+import os.path
+import glob
+import shutil
+import shlex,subprocess
+import string
+import sys
+import time
+import socket
+import zipfile
+import datetime
+
+# python tomcatdeploy.py  -p "/usr/local/apache-tomcat-8.0.0-RC5"   -H '127.0.0.1'  -P 8080  -f 'ROOT.zip' -d 'deploy'
+
+
+   
+
+TIMEOUT = 0.5
+INTERVAL = 0
+SUCCESS = 0
+FAILED = 1 
+
+def mycmd(cmd):
+    try:
+        p=subprocess.Popen(cmd,shell=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        (stdoutput,erroutput)=p.communicate()
+    except OSError:
+        print "command error"
+    return (stdoutput,erroutput)
+
+def unzipmyfile(filenames):
+    PIPE = subprocess.PIPE
+    cmd = subprocess.Popen(['/usr/bin/unzip', '-o', filenames],stdout=PIPE, stderr=PIPE)
+    stdout, stderr = cmd.communicate()
+    
+
+def zipmyfile(targetname,files):
+    
+    PIPE = subprocess.PIPE
+    cmd = subprocess.Popen(['/usr/bin/zip', '-r', targetname, files],stdout=PIPE, stderr=PIPE)
+    stdout, stderr = cmd.communicate()
+
+def get_time(interval=INTERVAL):
+    
+    now = (datetime.datetime.now()-datetime.timedelta(days = interval)).strftime("%Y-%m-%d-%H-%M")
+    return now
+
+def chk_port(host, port):
+    
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(TIMEOUT)
+    try:
+        s.connect((host, port))
+        s.close()
+        return 0
+    except socket.error,e:
+        s.close()
+        return 1 
+
+
+def _parser():
+
+    add_arg = None
+    if sys.version.startswith('2.6'):
+        import optparse
+        parser = optparse.OptionParser()
+        add_arg = parser.add_option
+    else:
+        import argparse
+        parser = argparse.ArgumentParser()
+        add_arg = parser.add_argument
+
+
+    add_arg('-s', '--signal', dest='status',help='start or stop the server', choices=['start','stop'],action='store')
+    add_arg('-p', '--path', dest='path',help='The path of tomcat', action='store')
+    add_arg('-H','--host',dest='host',help='The host of tomcat',action='store')
+    add_arg('-P','--port',dest='port',action='store')
+    add_arg('-f','--deployzip',dest='deployzipfile',action='store')
+    add_arg('-d','--deploy',dest='deploy',action='store')
+
+    return parser
+
+def getstatusOftomcat(tomcatpath):
+    
+    pid = None # Return
+    status = None # Return
+    
+    if not os.path.exists(tomcatpath):
+        print "The tomcat directory is not exist. Exit"
+        sys.exit(1)
+    
+    cmd1 = subprocess.Popen(shlex.split('ps -ef'),stdout=subprocess.PIPE)
+    cmd2 = subprocess.Popen(shlex.split('grep {0}'.format(tomcatpath)),stdin=cmd1.stdout,
+                 stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    cmd3 = subprocess.Popen(shlex.split('grep java'),stdin=cmd2.stdout,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    cmd4 = subprocess.Popen(shlex.split("awk '{print $2}'"),stdin=cmd3.stdout,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    
+    
+    #Allow cmd4 to receive a SIGPIPE if proc3,2,1 exits.
+    cmds =  [cmd1,cmd2,cmd3]
+    for cmd in cmds:
+        cmd.stdout.close()
+    out,err=cmd4.communicate()
+    
+    pid = out.strip()
+    
+                
+    if pid == '':
+        status = 'STOPPED'   
+    elif int(pid) > 1:
+        status = 'RUNNING'        
+    return (pid,status)
+
+class ManageTomcat(object):
+    
+    def __init__(self,path,host,port,backupprojectname=None,backupstoredir=None,deployzipfile=None):
+        self.path = path
+        self.host = host
+        self.port = port
+        self.backupprojectname = backupprojectname
+        self.backupstoredir = backupstoredir
+        self.deployzipfile = deployzipfile
+
+    def purgecache(self):
+        
+        path = self.path
+       
+        if os.path.exists(path + '/work/Catalina'):
+            shutil.rmtree(path + '/work/Catalina')
+            return SUCCESS
+        else:
+            return FAILED
+        
+        
+    def start(self):
+        out,ret = getstatusOftomcat(self.path)
+        if self.path.strip() == '':
+            raise Exception, 'path %s is null' % self.path
+        elif not os.path.exists(self.path):
+            raise Exception, 'path %s does not exist' % self.path
+        elif ret == 'RUNNING':
+            print "It did nothing!  Tomcat had been RUNNING"
+            sys.exit(0)
+        else:
+            self.purgecache()
+            r = subprocess.Popen(shlex.split(self.path + '/bin/startup.sh'),stdout=subprocess.PIPE,stderr=subprocess.PIPE).wait()
+            
+            if r == 0:
+                tpid,tret = getstatusOftomcat(self.path)
+                print ('Starting Tomcat:    : [OK]','Tomcat pid' ,(tpid))
+                #print "Starting tomcat: [OK]"
+            else:
+                print "Starting tomcat: [Failed]"
+            
+    def stop(self):
+
+        out,ret = getstatusOftomcat(self.path)
+        
+        if self.path.strip() == '':
+            raise Exception, 'path %s is null' % self.path
+        elif not os.path.exists(self.path):
+            raise Exception, 'path %s does not exist' % self.path
+        elif ret == 'STOPPED':
+            print "It did nothing!  Tomcat had been stopped"
+            
+        else:         
+            r = subprocess.Popen(shlex.split('kill -9 {0}'.format(out.strip())),stdout=subprocess.PIPE,stderr=subprocess.PIPE).wait()
+            time.sleep(TIMEOUT)
+            
+
+            if r == 0 and chk_port(self.host,string.atoi(self.port)):
+                print ('Stopping Tomcat:    : [OK]','Tomcat pid' ,(out))
+            else:
+                print "Stopping tomcat: [Failed] PID  %s",out
+                    
+
+
+    def restart(self):
+        self.stop()
+        time.sleep(TIMEOUT) 
+        self.start()
+    
+    def backup(self):
+        now = get_time()
+        path = self.path
+        files = glob.glob(path+'/webapps/*')
+        basenames = filter(lambda f: os.path.isdir(f),files)
+
+        if basenames.__len__() > 1:
+            print len(basenames)
+            
+            #log , many projects?
+        elif basenames.__len__() == 1:
+            basename =  os.path.basename(basenames[0])
+            print 'creating archive ......'
+            dirname =  os.path.dirname(basenames[0])
+            os.chdir(dirname)
+            zipmyfile(basename+"-"+now+".zip",basename)
+            if os.path.exists(basename+"-"+now+".zip"):
+                print "creating archive  succeed"
+            
+    def updatefiles(self):
+        path = self.path
+        deployzipfile = self.deployzipfile
+        os.chdir(path+'/webapps/')
+        if deployzipfile:
+            unzipmyfile(deployzipfile)
+        else:
+            print "updatefiles is not executed"
+            #log
+        
+
+    def deploy(self):
+        
+        self.stop()
+        self.backup()
+        self.updatefiles()
+        self.start()
+        
+    def rorate(self):
+        pass
+    
+    def checkupdate(self):
+        pass
+        #web and port check and log check
+    
+if __name__ == "__main__":
+    
+#    a = ManageTomcat(path="/usr/local/apache-tomcat-8.0.0-RC5",host="127.0.0.1",port=8080,deployzipfile="b.zip")
+
+    parser = _parser()
+ 
+
+    if sys.version.startswith('2.6'):
+        (opts, args) = parser.parse_args()
+
+        Tstatus = opts.status
+        Tpath = opts.path
+        Tport = opts.port
+        Thost = opts.host
+        Tdeployzipfile =  opts.deployzipfile
+
+        if Tstatus == 'start':
+            #a.start()
+            pass
+        elif Tstatus == 'stop':
+            #a.stop()
+            pass
+        elif opts.deploy == 'deploy':
+            
+            if  Tpath.strip() and  Thost.strip()  and  Tport.strip() and  Tdeployzipfile.strip():
+                
+                MT = ManageTomcat(path=Tpath,host=Thost,port=Tport,deployzipfile=Tdeployzipfile)
+                MT.deploy()
+                           
+        else:
+            pass            
+    else:
+        pass

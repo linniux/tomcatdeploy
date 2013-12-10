@@ -1,0 +1,57 @@
+from fabric.api import *
+from fabric.colors import *
+
+env.user = 'root'
+
+#env.password = '1234asdf\!'
+#env.hosts = '10.19.1.128'
+#env.roledefs = {
+#	'test' : ['10.19.2.201']
+#
+#}
+
+
+
+        
+
+#@roles('test')
+@parallel
+def test():
+    with hide('running','stdout','stderr'):
+	run('hostname')
+    with cd('/usr/local'):
+
+        run("hostname") 
+
+
+@parallel
+def sh(shfile):
+    shell = ""
+    try:
+        fd = open(shfile,"r")
+        shell = fd.read()
+    except:
+        print "cann't open file"
+        exit()
+    run(shell)
+
+@parallel
+def upfile(localpath,remotepath):
+    with cd(remotepath):
+        put(localpath,remotepath)
+
+#@roles('test')
+@parallel
+def addkey():
+
+    with hide('running'):
+        run('mkdir -p /root/.ssh')
+      	
+    with cd('/root/.ssh'):
+        upfile('./upload/key.pub','/root/.ssh/')	
+        run('cat key.pub >> authorized_keys')
+        run('rm -f key.pub')
+
+
+
+
